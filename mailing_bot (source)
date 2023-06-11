@@ -1,0 +1,145 @@
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from aiogram.dispatcher.filters.state import StatesGroup, State
+from aiogram.dispatcher.filters import BoundFilter
+
+
+class IsPrivate(BoundFilter):
+    async def check(self, message: Message) -> bool:
+        return message.chat.type == types.ChatType.PRIVATE
+
+def setup(dp: Dispatcher):
+    dp.filters_factory.bind(IsPrivate)
+
+
+class Bot_Mailing(StatesGroup):
+    text = State()
+    state = State()
+    photo = State()
+
+
+@dp.message_handler(IsPrivate(),text='/ras', chat_id=admins)
+async def start_mailing(message: Message):
+    await message.answer(f'Введите текст рассылки: ')
+    await Bot_Mailing.text.set()
+
+
+@dp.message_handler(IsPrivate(), state=Bot_Mailing.text)
+async def mailing_text(message: Message, state: FSMContext):
+    answer = message.text
+    markup = InlineKeyboardMarkup(row_width=2,
+                                  inline_keyboard=[
+                                      [
+                                          InlineKeyboardButton(text='Добавить фото', callback_data='add_photo'),
+                                          InlineKeyboardButton(text='Далее', callback_data='next'),
+                                          InlineKeyboardButton(text='Отменить', callback_data='quit')
+                                      ]
+                                  ])
+    await state.update_data(text=answer)
+    await message.answer(text=answer, reply_markup=markup)
+    await Bot_Mailing.state.set()
+
+
+@dp.message_handler(IsPrivate(), state=Bot_Mailing.photo, content_types=types.ContentType.PHOTO, chat_id=admins)
+async def handler_photo(message: Message, state: FSMContext):
+    photo_file_id = message.photo[-1].file_id
+    await state.update_data(photo=photo_file_id)
+    data = await state.get_data()
+    text = data.get('text')
+    photo = data.get('photo')
+    markup = InlineKeyboardMarkup(row_width=2,
+                                  inline_keyboard=[
+                                      [
+                                          InlineKeyboardButton(text='Далее', callback_data='next'),
+                                          InlineKeyboardButton(text='Отменить', callback_data='quit')
+                                      ]
+                                  ])
+    await message.answer_photo(photo=photo, caption=text, reply_markup=markup)
+
+
+@dp.message_handler(state=Bot_Mailing.photo, chat_id=admins)
+async def no_photo(message: Message):
+    markup = InlineKeyboardMarkup(row_width=2,
+                                  inline_keyboard=[
+                                      [
+                                          InlineKeyboardButton(text='Отменить', callback_data='quit')
+                                      ]
+                                  ])
+    await message.answer('Пришли мне фото', reply_markup=markup)
+
+
+@dp.callback_query_handler(text='add_photo', state=Bot_Mailing.state, chat_id=admins)
+async def add_photo(call: CallbackQuery):
+    await call.message.delete()
+    await call.message.answer("Пришли фото")
+    await Bot_Mailing.photo.set()
+
+
+@dp.callback_query_handler(text='next', state=Bot_Mailing.photo, chat_id=admins)
+async def start_ras(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text = data.get('text')
+    photo = data.get('photo')
+    await state.finish()
+    for user in database:
+        print(user)
+        try:
+            await dp.bot.send_photo(user, photo, text)
+            await asyncio.sleep(0.33)
+        except:
+            await call.message.answer(text=f"Не удалось отправить сообщение пользователю с идентификатором: {user}")
+    await call.message.delete()
+    await call.message.answer('✅Рассылка завершена')
+
+
+@dp.callback_query_handler(text='next', state=Bot_Mailing.state, chat_id=admins)
+async def callback_next(call: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    text = data.get('text')
+    await state.finish()
+    for user in database:
+        print(user)
+        try:
+            await dp.bot.send_message(user, text)
+            await asyncio.sleep(0.33)
+        except:
+            await call.message.answer(text=f"Не удалось отправить сообщение пользователю с идентификатором: {user}")
+    await call.message.delete()
+    await call.message.answer('✅Рассылка завершена')
+
+
+@dp.callback_query_handler(text='quit', state=[Bot_Mailing.text, Bot_Mailing.photo, Bot_Mailing.state], chat_id=admins)
+async def quit_handler(call: CallbackQuery, state: FSMContext):
+    await state.finish()
+    await call.message.delete()
+    await call.message.answer('❌Рассылка отменена')
+
+
+@dp.message_handler(commands=['msg'], chat_id=admins)
+async def message_user(message):
+        message_text = message.text.replace("/msg ", "")
+        user_id = message_text.split(" ")[0]
+        message_text = message_text.replace(user_id + " ", "")
+        try:
+            await bot.send_message(user_id, message_text)
+            await bot.send_message(chat_id=message.chat.id, text=f"Сообщение отправлено пользователю с id: {user_id}")
+        except:
+            await bot.send_message(chat_id=message.chat.id,
+                                   text=f"Не удалось отправить сообщение пользователю с идентификатором: {user_id}")
+
+
+@dp.message_handler(commands=['help'], chat_id=admins)
+async def admin_kb(message):
+        await bot.send_message(chat_id=message.chat.id,
+                               text=f"Привет ВСЕМОГУЩИЙ {message.from_user.full_name}\n/see - Смотреть bd\n/ras <i>messege_text</i> - Отправить общюю рассылку \n/msg <i><b>id</b> message_text</i> - Отправить личное сообшение по id\nИ помни что каждый человек имнеет право быть услышанным!",
+                               parse_mode='HTML')
+
+
+@dp.message_handler(commands=['see'], chat_id=admins)
+async def see_user(message):
+        if database:
+            text = ""
+            for user_id, user_data in database.items():
+                text += f"ID: {user_id}\nUser: {user_data['user']}\nname: {user_data['name']}\n\n"
+            await bot.send_message(chat_id=message.chat.id, text=text)
+        else:
+            await bot.send_message(chat_id=message.chat.id, text="Нечего нет")
